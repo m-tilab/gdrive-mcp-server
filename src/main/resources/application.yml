@@ -9,7 +9,5 @@ spring:
 
 google:
   drive:
-    client-id: ${GOOGLE_CLIENT_ID}
-    client-secret: ${GOOGLE_CLIENT_SECRET}
-    refresh-token: ${GOOGLE_REFRESH_TOKEN}
+    tokens-path: ${GDRIVE_TOKENS_PATH}
     application-name: gdrive-mcp-server
