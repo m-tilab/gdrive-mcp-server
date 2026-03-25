@@ -61,6 +61,59 @@ java -jar target/gdrive-mcp-server-0.0.1-SNAPSHOT.jar
 
 ## Connect to an MCP client
 
+### GitHub Copilot CLI
+
+The Copilot CLI stores MCP server config in `~/.copilot/mcp-config.json`.
+
+**Option A — interactive (recommended):**
+```
+/mcp add
+```
+Fill in the fields and press `Ctrl+S` to save.
+
+**Option B — edit config file directly:**
+
+Add to `~/.copilot/mcp-config.json`:
+
+```json
+{
+  "mcpServers": {
+    "google-drive": {
+      "type": "stdio",
+      "command": "java",
+      "args": ["-jar", "/path/to/gdrive-mcp-server-0.0.1-SNAPSHOT.jar"],
+      "env": {
+        "GOOGLE_CLIENT_ID": "your-client-id",
+        "GOOGLE_CLIENT_SECRET": "your-client-secret",
+        "GOOGLE_REFRESH_TOKEN": "your-refresh-token"
+      },
+      "tools": ["*"]
+    }
+  }
+}
+```
+
+### GitHub Copilot in VS Code
+
+Add to `.vscode/mcp.json` in your workspace (or user-level `settings.json` under `"mcp"`):
+
+```json
+{
+  "servers": {
+    "google-drive": {
+      "type": "stdio",
+      "command": "java",
+      "args": ["-jar", "/path/to/gdrive-mcp-server-0.0.1-SNAPSHOT.jar"],
+      "env": {
+        "GOOGLE_CLIENT_ID": "your-client-id",
+        "GOOGLE_CLIENT_SECRET": "your-client-secret",
+        "GOOGLE_REFRESH_TOKEN": "your-refresh-token"
+      }
+    }
+  }
+}
+```
+
 ### Claude Desktop
 
 Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
@@ -81,9 +134,9 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 }
 ```
 
-### GitHub Copilot CLI / Cursor
+### Cursor
 
-Add to your MCP config file (e.g. `~/.cursor/mcp.json` or `~/.copilot/mcp.json`):
+Add to `~/.cursor/mcp.json`:
 
 ```json
 {
