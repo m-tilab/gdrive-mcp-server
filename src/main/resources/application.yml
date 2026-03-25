@@ -1,0 +1,15 @@
+spring:
+  ai:
+    mcp:
+      server:
+        name: gdrive-mcp-server
+        version: 0.0.1
+        stdio: true   # STDIO transport — works with Claude Desktop, Copilot, Cursor, etc.
+        type: SYNC
+
+google:
+  drive:
+    client-id: ${GOOGLE_CLIENT_ID}
+    client-secret: ${GOOGLE_CLIENT_SECRET}
+    refresh-token: ${GOOGLE_REFRESH_TOKEN}
+    application-name: gdrive-mcp-server
