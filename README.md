@@ -21,6 +21,7 @@ Exposes Google Drive operations as MCP tools, making your Google Drive accessibl
 | `create_folder` | Create a new folder |
 | `update_document` | Write (replace) the text content of an existing Google Doc |
 | `update_spreadsheet` | Write (replace) the content of an existing Google Sheet using CSV data |
+| `update_presentation` | Write (replace) the text content of an existing Google Slides presentation |
 
 ---
 
