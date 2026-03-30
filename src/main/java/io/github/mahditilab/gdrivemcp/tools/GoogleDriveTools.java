@@ -266,6 +266,23 @@ public class GoogleDriveTools {
         return "Updated spreadsheet: id=%s, name=%s".formatted(updated.getId(), updated.getName());
     }
 
+    @Tool(name = "update_presentation", description = """
+            Write (replace) the text content of an existing Google Slides presentation.
+            The provided plain text will become the full content of the presentation.
+            Returns confirmation with the presentation ID and name.
+            """)
+    public String updatePresentation(
+            @ToolParam(description = "The Google Drive file ID of the Google Slides presentation to update", required = true) String fileId,
+            @ToolParam(description = "The new plain text content to write into the presentation", required = true) String content
+    ) throws IOException {
+        ByteArrayContent mediaContent = ByteArrayContent.fromString("text/plain", content);
+        File updated = drive.files().update(fileId, new File(), mediaContent)
+                .setFields("id, name")
+                .execute();
+
+        return "Updated presentation: id=%s, name=%s".formatted(updated.getId(), updated.getName());
+    }
+
     // --- Helpers ---
 
     private String formatFileList(List<File> files) {
