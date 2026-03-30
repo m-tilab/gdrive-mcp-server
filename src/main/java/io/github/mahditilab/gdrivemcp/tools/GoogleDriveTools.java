@@ -92,7 +92,8 @@ public class GoogleDriveTools {
     @Tool(name = "read_file", description = """
             Read the text content of a Google Drive file.
             Supports Google Docs (exported as plain text), Google Sheets (exported as CSV),
-            and plain text files. Binary files (images, videos) are not supported.
+            Google Slides (slide content + speaker notes per slide), and plain text files.
+            Binary files (images, videos) are not supported.
             """)
     public String readFile(
             @ToolParam(description = "The Google Drive file ID", required = true) String fileId
@@ -109,7 +110,7 @@ public class GoogleDriveTools {
         } else if (GOOGLE_SHEET_MIME.equals(mimeType)) {
             drive.files().export(fileId, "text/csv").executeMediaAndDownloadTo(out);
         } else if (GOOGLE_SLIDES_MIME.equals(mimeType)) {
-            drive.files().export(fileId, "text/plain").executeMediaAndDownloadTo(out);
+            return readPresentation(fileId);
         } else if (mimeType.startsWith("text/") || mimeType.equals("application/json")) {
             drive.files().get(fileId).executeMediaAndDownloadTo(out);
         } else {
@@ -274,14 +275,15 @@ public class GoogleDriveTools {
 
     @Tool(name = "update_presentation", description = """
             Write (replace) the text content of an existing Google Slides presentation.
-            The provided plain text will become the full content of the presentation.
             Slides are separated by lines containing only "---".
             The first line of each slide becomes the title; remaining lines become the body.
+            Optionally add speaker notes by including a "[notes]" line within a slide block;
+            everything after "[notes]" becomes the speaker notes for that slide.
             Returns confirmation with the presentation ID and name.
             """)
     public String updatePresentation(
             @ToolParam(description = "The Google Drive file ID of the Google Slides presentation to update", required = true) String fileId,
-            @ToolParam(description = "The new plain text content. Separate slides with lines containing only '---'. First line of each slide is the title, rest is body.", required = true) String content
+            @ToolParam(description = "Plain text content. Separate slides with '---'. First line = title, rest = body. Add '[notes]' line to start speaker notes section.", required = true) String content
     ) throws IOException {
         Presentation presentation = slides.presentations().get(fileId).execute();
         List<Request> requests = new ArrayList<>();
@@ -297,68 +299,65 @@ public class GoogleDriveTools {
 
         // Parse content into slides (split on lines that are exactly "---")
         String[] slideBlocks = content.split("(?m)^---$");
-        List<String[]> slideTexts = new ArrayList<>();
+        record SlideContent(String title, String body, String notes) {}
+        List<SlideContent> slideContents = new ArrayList<>();
         for (String block : slideBlocks) {
             String trimmed = block.strip();
-            if (!trimmed.isEmpty()) {
-                slideTexts.add(trimmed.split("\n", 2));
-            }
+            if (trimmed.isEmpty()) continue;
+            // Split on [notes] marker
+            String[] noteParts = trimmed.split("(?m)^\\[notes\\]$", 2);
+            String mainPart  = noteParts[0].strip();
+            String notesPart = noteParts.length > 1 ? noteParts[1].strip() : "";
+            String[] lines   = mainPart.split("\n", 2);
+            slideContents.add(new SlideContent(
+                    lines[0].strip(),
+                    lines.length > 1 ? lines[1].strip() : "",
+                    notesPart));
         }
 
-        if (slideTexts.isEmpty()) {
+        if (slideContents.isEmpty()) {
             return "No content provided. Presentation was not updated.";
         }
 
-        // Update the first existing slide
-        String firstSlideId = existingSlides != null && !existingSlides.isEmpty()
-                ? existingSlides.get(0).getObjectId() : null;
-        List<String> slideIds = new ArrayList<>();
-        if (firstSlideId != null) {
-            slideIds.add(firstSlideId);
-        }
-
         // Create additional slides for remaining blocks
-        for (int i = 1; i < slideTexts.size(); i++) {
+        for (int i = 1; i < slideContents.size(); i++) {
             String newSlideId = "slide_" + UUID.randomUUID().toString().replace("-", "");
             requests.add(new Request().setCreateSlide(
                     new CreateSlideRequest()
                             .setObjectId(newSlideId)
                             .setInsertionIndex(i)
                             .setSlideLayoutReference(new LayoutReference().setPredefinedLayout("TITLE_AND_BODY"))));
-            slideIds.add(newSlideId);
         }
 
-        // Apply slide creation requests first
+        // Apply delete + create requests first
         if (!requests.isEmpty()) {
             slides.presentations().batchUpdate(fileId,
                     new BatchUpdatePresentationRequest().setRequests(requests)).execute();
             requests.clear();
         }
 
-        // Re-fetch presentation to get updated slide/shape IDs and text content
+        // Re-fetch to get current slide/shape IDs and text content
         presentation = slides.presentations().get(fileId).execute();
         List<Page> updatedSlides = presentation.getSlides();
 
-        // Populate each slide's title and body
-        for (int i = 0; i < Math.min(slideTexts.size(), updatedSlides.size()); i++) {
+        // Populate each slide's title, body, and notes
+        for (int i = 0; i < Math.min(slideContents.size(), updatedSlides.size()); i++) {
             Page slide = updatedSlides.get(i);
-            String[] parts = slideTexts.get(i);
-            String titleText = parts[0].strip();
-            String bodyText  = parts.length > 1 ? parts[1].strip() : "";
+            SlideContent sc = slideContents.get(i);
 
+            // Write title and body placeholders
             for (PageElement element : slide.getPageElements()) {
                 if (element.getShape() == null || element.getShape().getPlaceholder() == null) continue;
-                String pType = element.getShape().getPlaceholder().getType();
+                String pType   = element.getShape().getPlaceholder().getType();
                 String shapeId = element.getObjectId();
 
                 String text = switch (pType) {
-                    case "TITLE", "CENTERED_TITLE" -> titleText;
-                    case "BODY", "SUBTITLE" -> bodyText;
+                    case "TITLE", "CENTERED_TITLE" -> sc.title();
+                    case "BODY", "SUBTITLE"         -> sc.body();
                     default -> null;
                 };
 
                 if (text != null) {
-                    // Only delete existing text if the shape actually has content
                     boolean hasText = element.getShape().getText() != null
                             && element.getShape().getText().getTextElements() != null
                             && !element.getShape().getText().getTextElements().isEmpty();
@@ -377,6 +376,31 @@ public class GoogleDriveTools {
                     }
                 }
             }
+
+            // Write speaker notes
+            if (!sc.notes().isEmpty() && slide.getSlideProperties() != null
+                    && slide.getSlideProperties().getNotesPage() != null) {
+                Page notesPage = slide.getSlideProperties().getNotesPage();
+                for (PageElement element : notesPage.getPageElements()) {
+                    if (element.getShape() == null || element.getShape().getPlaceholder() == null) continue;
+                    if (!"BODY".equals(element.getShape().getPlaceholder().getType())) continue;
+                    String notesShapeId = element.getObjectId();
+                    boolean hasText = element.getShape().getText() != null
+                            && element.getShape().getText().getTextElements() != null
+                            && !element.getShape().getText().getTextElements().isEmpty();
+                    if (hasText) {
+                        requests.add(new Request().setDeleteText(
+                                new DeleteTextRequest()
+                                        .setObjectId(notesShapeId)
+                                        .setTextRange(new Range().setType("ALL"))));
+                    }
+                    requests.add(new Request().setInsertText(
+                            new InsertTextRequest()
+                                    .setObjectId(notesShapeId)
+                                    .setInsertionIndex(0)
+                                    .setText(sc.notes())));
+                }
+            }
         }
 
         if (!requests.isEmpty()) {
@@ -385,7 +409,67 @@ public class GoogleDriveTools {
         }
 
         return "Updated presentation: id=%s, name=%s, slides=%d"
-                .formatted(fileId, presentation.getTitle(), slideTexts.size());
+                .formatted(fileId, presentation.getTitle(), slideContents.size());
+    }
+
+    private String readPresentation(String fileId) throws IOException {
+        Presentation presentation = slides.presentations().get(fileId).execute();
+        if (presentation.getSlides() == null) return "No slides found.";
+
+        StringBuilder sb = new StringBuilder();
+        List<Page> slideList = presentation.getSlides();
+        for (int i = 0; i < slideList.size(); i++) {
+            if (i > 0) sb.append("\n---\n");
+            Page slide = slideList.get(i);
+            String title = "", body = "", notes = "";
+
+            // Extract title and body from slide elements
+            if (slide.getPageElements() != null) {
+                for (PageElement el : slide.getPageElements()) {
+                    if (el.getShape() == null || el.getShape().getPlaceholder() == null) continue;
+                    String pType = el.getShape().getPlaceholder().getType();
+                    String text  = extractText(el);
+                    title = switch (pType) {
+                        case "TITLE", "CENTERED_TITLE" -> text;
+                        default -> title;
+                    };
+                    body = switch (pType) {
+                        case "BODY", "SUBTITLE" -> text;
+                        default -> body;
+                    };
+                }
+            }
+
+            // Extract speaker notes
+            if (slide.getSlideProperties() != null && slide.getSlideProperties().getNotesPage() != null) {
+                Page notesPage = slide.getSlideProperties().getNotesPage();
+                if (notesPage.getPageElements() != null) {
+                    for (PageElement el : notesPage.getPageElements()) {
+                        if (el.getShape() == null || el.getShape().getPlaceholder() == null) continue;
+                        if ("BODY".equals(el.getShape().getPlaceholder().getType())) {
+                            notes = extractText(el);
+                        }
+                    }
+                }
+            }
+
+            sb.append(title);
+            if (!body.isEmpty())  sb.append("\n").append(body);
+            if (!notes.isEmpty()) sb.append("\n[notes]\n").append(notes);
+        }
+        return sb.toString();
+    }
+
+    private String extractText(PageElement element) {
+        if (element.getShape().getText() == null
+                || element.getShape().getText().getTextElements() == null) return "";
+        StringBuilder sb = new StringBuilder();
+        for (var te : element.getShape().getText().getTextElements()) {
+            if (te.getTextRun() != null && te.getTextRun().getContent() != null) {
+                sb.append(te.getTextRun().getContent());
+            }
+        }
+        return sb.toString().strip();
     }
 
     // --- Helpers ---
